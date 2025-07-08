@@ -1,7 +1,6 @@
 "use client"
 
-import type React from "react"
-import { createContext, useContext, useState, useEffect } from "react"
+import React, { createContext, useContext, useState, useEffect } from "react"
 
 interface User {
   id: number
@@ -9,6 +8,8 @@ interface User {
   name: string
   phone?: string
   address?: string
+  is_admin?: boolean
+  created_at?: string
 }
 
 interface AuthContextType {
@@ -26,12 +27,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    // Check if user is logged in on mount
-    const savedUser = localStorage.getItem("user")
-    if (savedUser) {
-      setUser(JSON.parse(savedUser))
+    // Check if user is logged in on mount (server-based, no localStorage)
+    const checkAuth = async () => {
+      try {
+        // In a real app, you'd check with the server using a session/token
+        // For now, we'll just set loading to false
+        setIsLoading(false)
+      } catch (error) {
+        console.error("Auth check error:", error)
+        setIsLoading(false)
+      }
     }
-    setIsLoading(false)
+    
+    checkAuth()
   }, [])
 
   const login = async (email: string, password: string): Promise<boolean> => {
@@ -47,7 +55,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (response.ok) {
         const userData = await response.json()
         setUser(userData.user)
-        localStorage.setItem("user", JSON.stringify(userData.user))
         return true
       }
       return false
@@ -70,7 +77,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (response.ok) {
         const userData = await response.json()
         setUser(userData.user)
-        localStorage.setItem("user", JSON.stringify(userData.user))
         return true
       }
       return false
@@ -82,10 +88,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     setUser(null)
-    localStorage.removeItem("user")
   }
 
-  return <AuthContext.Provider value={{ user, login, register, logout, isLoading }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={{ user, login, register, logout, isLoading }}>
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth() {

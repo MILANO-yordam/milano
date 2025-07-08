@@ -1,44 +1,48 @@
-import { type NextRequest, NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { sql, hasDb } from "@/lib/db"
 import bcrypt from "bcryptjs"
 
-/* Use the same demoUsers array declared in register route via globalThis */
-const demoUsers =
-  (globalThis as any).__demoUsers ||
-  ((globalThis as any).__demoUsers = [] as { id: number; email: string; password: string; name: string }[])
-
 export async function POST(req: NextRequest) {
-  const { email, password } = await req.json()
-  if (!email || !password) {
-    return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
-  }
-
-  /* -------------------------- NO DATABASE MODE --------------------------- */
-  if (!hasDb) {
-    const user = demoUsers.find((u) => u.email === email)
-    if (!user) return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
-
-    const ok = await bcrypt.compare(password, user.password)
-    if (!ok) return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
-
-    const { password: _pw, ...safe } = user
-    return NextResponse.json({ success: true, user: safe })
-  }
-
-  /* --------------------------- REAL DATABASE ----------------------------- */
   try {
-    const rows = await sql`SELECT * FROM users WHERE email = ${email}`
-    const userRow = Array.isArray(rows) ? rows[0] : (rows as { rows: any[] }).rows?.[0]
+    const { email, password } = await req.json()
+    
+    if (!email || !password) {
+      return NextResponse.json({ error: "Email va parol kiritilishi shart" }, { status: 400 })
+    }
 
-    if (!userRow) return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
+    if (!hasDb) {
+      return NextResponse.json({ error: "Database mavjud emas" }, { status: 500 })
+    }
 
-    const ok = await bcrypt.compare(password, userRow.password)
-    if (!ok) return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
+    // Find user by email
+    const users = await sql`
+      SELECT id, email, password, name, phone, address, is_admin, created_at 
+      FROM users 
+      WHERE email = ${email}
+    `
 
-    const { password: _pw, ...safe } = userRow
-    return NextResponse.json({ success: true, user: safe })
-  } catch (err) {
-    console.error("Login DB error:", (err as Error).message)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    if (users.length === 0) {
+      return NextResponse.json({ error: "Noto'g'ri email yoki parol" }, { status: 401 })
+    }
+
+    const user = users[0]
+
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, user.password)
+    if (!isValidPassword) {
+      return NextResponse.json({ error: "Noto'g'ri email yoki parol" }, { status: 401 })
+    }
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user
+
+    return NextResponse.json({ 
+      success: true, 
+      user: userWithoutPassword 
+    })
+
+  } catch (error) {
+    console.error("Login error:", error)
+    return NextResponse.json({ error: "Server xatosi" }, { status: 500 })
   }
 }
