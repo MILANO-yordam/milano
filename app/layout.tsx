@@ -7,13 +7,14 @@ import { Toaster } from "@/components/ui/toaster"
 import { CartProvider } from "@/contexts/cart-context"
 import { AuthProvider } from "@/contexts/auth-context"
 import { LanguageProvider } from "@/contexts/language-context"
+import { SupportWidget } from "@/components/support-widget"
 
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Milano kafesi - Premium restoran tajribasi",
+  title: "Milano Cafe - Premium restoran tajribasi",
   description: "Bizning nafis menyu va ajoyib xizmatimiz bilan Milano kafesida eng zo'r taomlardan bahramand bo'ling.",
-    generator: 'v0.dev'
+  generator: 'Milano Cafe System v2.0'
 }
 
 export default function RootLayout({
@@ -29,6 +30,7 @@ export default function RootLayout({
             <AuthProvider>
               <CartProvider>
                 {children}
+                <SupportWidget />
                 <Toaster />
               </CartProvider>
             </AuthProvider>

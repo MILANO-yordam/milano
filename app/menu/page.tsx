@@ -6,9 +6,15 @@ import { Footer } from "@/components/footer"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Star, Plus, Search } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Star, Plus, Search, MessageSquare, Send } from "lucide-react"
 import { useLanguage } from "@/contexts/language-context"
 import { useCart } from "@/contexts/cart-context"
+import { useAuth } from "@/contexts/auth-context"
+import { useToast } from "@/hooks/use-toast"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
 
 interface MenuItem {
   id: number
@@ -23,6 +29,7 @@ interface MenuItem {
   category_name_uz: string
   category_name_ru: string
   category_name_en: string
+  category_id: number
 }
 
 interface Category {
@@ -32,14 +39,34 @@ interface Category {
   name_en: string
 }
 
+interface Review {
+  id: number
+  user_name: string
+  rating: number
+  comment: string
+  created_at: string
+}
+
+interface MenuItemWithReviews extends MenuItem {
+  averageRating: number
+  totalReviews: number
+  reviews: Review[]
+}
+
 export default function MenuPage() {
   const { language, t } = useLanguage()
   const { addToCart } = useCart()
+  const { user } = useAuth()
+  const { toast } = useToast()
   const [menuItems, setMenuItems] = useState<MenuItem[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [isLoading, setIsLoading] = useState(true)
+  const [selectedItem, setSelectedItem] = useState<MenuItemWithReviews | null>(null)
+  const [userRating, setUserRating] = useState(0)
+  const [userComment, setUserComment] = useState("")
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false)
 
   useEffect(() => {
     fetchMenuData()
@@ -47,34 +74,123 @@ export default function MenuPage() {
 
   const fetchMenuData = async () => {
     try {
-      const [menuResponse, categoriesResponse] = await Promise.all([fetch("/api/menu"), fetch("/api/categories")])
+      const [menuResponse, categoriesResponse] = await Promise.all([
+        fetch("/api/menu"),
+        fetch("/api/categories")
+      ])
 
-      // --- Menu items ---
       let fetchedMenu: MenuItem[] = []
       if (menuResponse.ok) {
         const data = await menuResponse.json()
         fetchedMenu = data.menuItems || []
-      } else {
-        const txt = await menuResponse.text()
-        console.error("Menu API error:", menuResponse.status, txt)
       }
 
-      // --- Categories ---
       let fetchedCategories: Category[] = []
       if (categoriesResponse.ok) {
         const data = await categoriesResponse.json()
         fetchedCategories = data.categories || []
-      } else {
-        const txt = await categoriesResponse.text()
-        console.error("Categories API error:", categoriesResponse.status, txt)
       }
 
       setMenuItems(fetchedMenu)
       setCategories(fetchedCategories)
     } catch (err) {
-      console.error("Unexpected fetch error:", err)
+      console.error("Fetch error:", err)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const fetchItemReviews = async (itemId: number) => {
+    try {
+      const response = await fetch(`/api/reviews?menuItemId=${itemId}`)
+      if (response.ok) {
+        const data = await response.json()
+        return {
+          reviews: data.reviews || [],
+          averageRating: data.averageRating || 0,
+          totalReviews: data.totalReviews || 0
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching reviews:", error)
+    }
+    return { reviews: [], averageRating: 0, totalReviews: 0 }
+  }
+
+  const handleItemClick = async (item: MenuItem) => {
+    const reviewData = await fetchItemReviews(item.id)
+    setSelectedItem({
+      ...item,
+      ...reviewData
+    })
+  }
+
+  const handleSubmitReview = async () => {
+    if (!user) {
+      toast({
+        title: t("error"),
+        description: "Sharh qoldirish uchun tizimga kiring",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (userRating === 0) {
+      toast({
+        title: t("error"),
+        description: "Iltimos, baho bering",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsSubmittingReview(true)
+
+    try {
+      const response = await fetch("/api/reviews", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          menuItemId: selectedItem?.id,
+          rating: userRating,
+          comment: userComment.trim() || null
+        }),
+      })
+
+      if (response.ok) {
+        toast({
+          title: t("success"),
+          description: "Sharhingiz qo'shildi!",
+        })
+        setUserRating(0)
+        setUserComment("")
+        // Refresh reviews
+        if (selectedItem) {
+          const reviewData = await fetchItemReviews(selectedItem.id)
+          setSelectedItem({
+            ...selectedItem,
+            ...reviewData
+          })
+        }
+      } else {
+        const errorData = await response.json()
+        toast({
+          title: t("error"),
+          description: errorData.error || "Sharh qo'shishda xatolik",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      toast({
+        title: t("error"),
+        description: "Server bilan bog'lanishda xatolik",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmittingReview(false)
     }
   }
 
@@ -90,6 +206,24 @@ export default function MenuPage() {
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat("uz-UZ").format(price) + " so'm"
+  }
+
+  const renderStars = (rating: number, interactive = false, onStarClick?: (rating: number) => void) => {
+    return (
+      <div className="flex space-x-1">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <Star
+            key={star}
+            className={`h-5 w-5 ${
+              star <= rating 
+                ? "fill-yellow-400 text-yellow-400" 
+                : "text-gray-300"
+            } ${interactive ? "cursor-pointer hover:text-yellow-400" : ""}`}
+            onClick={() => interactive && onStarClick && onStarClick(star)}
+          />
+        ))}
+      </div>
+    )
   }
 
   if (isLoading) {
@@ -115,7 +249,7 @@ export default function MenuPage() {
         <div className="text-center mb-12">
           <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">{t("ourMenu")}</h1>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            Discover our delicious selection of carefully crafted dishes
+            Bizning ehtiyot bilan tayyorlangan mazali taomlarimizni kashf eting
           </p>
         </div>
 
@@ -162,6 +296,7 @@ export default function MenuPage() {
             <Card
               key={item.id}
               className="group cursor-pointer transition-all duration-300 hover:shadow-xl hover:-translate-y-1"
+              onClick={() => handleItemClick(item)}
             >
               <CardContent className="p-0">
                 <div className="relative overflow-hidden rounded-t-lg">
@@ -179,21 +314,22 @@ export default function MenuPage() {
                 <div className="p-4">
                   <div className="mb-3">
                     <h3 className="text-lg font-bold text-gray-900 mb-1">{getLocalizedText(item, "name")}</h3>
-                    <p className="text-gray-600 text-sm line-clamp-2">{getLocalizedText(item, "description")})</p>
+                    <p className="text-gray-600 text-sm line-clamp-2">{getLocalizedText(item, "description")}</p>
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div className="text-xl font-bold text-orange-600">{formatPrice(item.price)}</div>
                     <Button
                       size="sm"
-                      onClick={() =>
+                      onClick={(e) => {
+                        e.stopPropagation()
                         addToCart({
                           id: item.id,
                           name: getLocalizedText(item, "name"),
                           price: item.price,
                           image_url: item.image_url,
                         })
-                      }
+                      }}
                       className="bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white rounded-full px-3 py-1 transition-all duration-300 hover:shadow-lg"
                     >
                       <Plus className="w-4 h-4 mr-1" />
@@ -212,6 +348,132 @@ export default function MenuPage() {
           </div>
         )}
       </div>
+
+      {/* Item Details Dialog */}
+      <Dialog open={!!selectedItem} onOpenChange={() => setSelectedItem(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold">
+              {selectedItem && getLocalizedText(selectedItem, "name")}
+            </DialogTitle>
+          </DialogHeader>
+          
+          {selectedItem && (
+            <div className="space-y-6">
+              {/* Item Image and Info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <img
+                    src={selectedItem.image_url || "/placeholder.svg"}
+                    alt={getLocalizedText(selectedItem, "name")}
+                    className="w-full h-64 object-cover rounded-lg"
+                  />
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-xl font-bold mb-2">{getLocalizedText(selectedItem, "name")}</h3>
+                    <p className="text-gray-600">{getLocalizedText(selectedItem, "description")}</p>
+                  </div>
+                  
+                  <div className="flex items-center space-x-4">
+                    <div className="text-2xl font-bold text-orange-600">
+                      {formatPrice(selectedItem.price)}
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      {renderStars(selectedItem.averageRating)}
+                      <span className="text-sm text-gray-600">
+                        ({selectedItem.totalReviews} sharh)
+                      </span>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={() => {
+                      addToCart({
+                        id: selectedItem.id,
+                        name: getLocalizedText(selectedItem, "name"),
+                        price: selectedItem.price,
+                        image_url: selectedItem.image_url,
+                      })
+                    }}
+                    className="w-full bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    {t("addToCart")}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Reviews Section */}
+              <div className="border-t pt-6">
+                <h3 className="text-xl font-bold mb-4 flex items-center">
+                  <MessageSquare className="h-5 w-5 mr-2" />
+                  Sharhlar va baholar
+                </h3>
+
+                {/* Add Review */}
+                {user && (
+                  <div className="bg-gray-50 p-4 rounded-lg mb-6">
+                    <h4 className="font-semibold mb-3">Sharh qoldiring</h4>
+                    <div className="space-y-3">
+                      <div>
+                        <Label>Baho bering:</Label>
+                        <div className="mt-1">
+                          {renderStars(userRating, true, setUserRating)}
+                        </div>
+                      </div>
+                      <div>
+                        <Label htmlFor="comment">Sharh (ixtiyoriy):</Label>
+                        <Textarea
+                          id="comment"
+                          value={userComment}
+                          onChange={(e) => setUserComment(e.target.value)}
+                          placeholder="Mahsulot haqida fikringizni yozing..."
+                          className="mt-1"
+                        />
+                      </div>
+                      <Button
+                        onClick={handleSubmitReview}
+                        disabled={isSubmittingReview || userRating === 0}
+                        className="bg-orange-600 hover:bg-orange-700"
+                      >
+                        <Send className="h-4 w-4 mr-2" />
+                        {isSubmittingReview ? "Yuborilmoqda..." : "Sharh yuborish"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Reviews List */}
+                <div className="space-y-4">
+                  {selectedItem.reviews.length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">
+                      Hali sharhlar yo'q. Birinchi bo'lib sharh qoldiring!
+                    </p>
+                  ) : (
+                    selectedItem.reviews.map((review) => (
+                      <div key={review.id} className="border-b pb-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <p className="font-semibold">{review.user_name}</p>
+                            {renderStars(review.rating)}
+                          </div>
+                          <span className="text-sm text-gray-500">
+                            {new Date(review.created_at).toLocaleDateString("uz-UZ")}
+                          </span>
+                        </div>
+                        {review.comment && (
+                          <p className="text-gray-700">{review.comment}</p>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Footer />
     </div>
